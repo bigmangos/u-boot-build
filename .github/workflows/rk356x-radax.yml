@@ -1,0 +1,107 @@
+name: Build u-boot for RK356x Radax
+run-name: u-boot ${{ inputs.uboot_repo }} - ${{ inputs.uboot_ref }} for RK356x
+on:
+  workflow_dispatch:
+    inputs:
+      uboot_repo:
+        description: u-boot repo
+        required: true
+        default: radxa/u-boot
+        type: choice
+        options:
+          - radxa/u-boot # next-dev-v2024.10
+          - rockchip-linux/u-boot # next-dev
+      uboot_ref:
+        description: u-boot ref
+        required: true
+        default: next-dev-v2024.10
+        type: choice
+        options:
+          - next-dev-v2024.10
+          - next-dev
+      rkbin_repo:
+        description: rkbin repo
+        required: true
+        default: radxa/rkbin
+        type: choice
+        options:
+          - radxa/rkbin
+          - rockchip-linux/rkbin
+      rkbin_ref:
+        description: rkbin ref
+        required: true
+        default: develop-v2024.10
+        type: choice
+        options:
+          - develop-v2024.10
+          - master
+
+jobs:
+  build:
+    name: ${{ matrix.boards.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        boards:
+          [
+            {
+              "name": "rk3568-dg-tn3568",
+              "config": "rk3568-dg-tn3568_defconfig",
+              "variant": "RK3568",
+            },
+          ]
+
+    steps:
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install gcc gcc-aarch64-linux-gnu python3-pyelftools confget libgnutls28-dev uuid-dev device-tree-compiler libncurses5-dev build-essential libssl-dev mtools bc dosfstools flex bison
+          wget https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz
+          mkdir python2.7
+          tar -xzf Python-2.7.18.tgz -C python2.7
+          cd python2.7
+          mv Python-2.7.18/* .
+          ./configure --prefix=/usr/local/share/python2.7
+          make
+          sudo make install
+          /usr/local/share/python2.7/bin/python2 -V
+          sudo ln -s /usr/local/share/python2.7/bin/python2 /usr/bin/python2
+
+      - name: Checkout rkbin - ${{ inputs.rkbin_repo }} - ${{ inputs.rkbin_ref }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.rkbin_repo }}
+          ref: ${{ inputs.rkbin_ref }}
+          path: rkbin
+
+      - name: Checkout u-boot -  ${{ inputs.uboot_repo }} - ${{ inputs.uboot_ref }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.uboot_repo }}
+          ref: ${{ inputs.uboot_ref }}
+          path: u-boot
+
+      - name: Add Coustom Dts and Defconfig
+        run: |
+          curl -L "https://raw.githubusercontent.com/bigmangos/u-boot-build/refs/heads/main/rk3568-dg-tn3568.dts" -o u-boot/arch/arm/dts/rk3568-dg-tn3568.dts
+          curl -L "https://raw.githubusercontent.com/bigmangos/u-boot-build/refs/heads/main/rk3568-dg-tn3568_defconfig" -o u-boot/configs/rk3568-dg-tn3568_defconfig
+
+      - name: Build u-boot - radax - ${{ matrix.boards.config }}
+        id: build-radax
+        if: ${{ inputs.rkbin_repo == 'radxa/rkbin' }}
+        run: |
+          curl -L "https://raw.githubusercontent.com/bigmangos/u-boot-build/refs/heads/main/board_configs.sh" -o board_configs.sh
+          curl -L "https://raw.githubusercontent.com/bigmangos/u-boot-build/refs/heads/main/mk-uboot.sh" -o mk-uboot.sh
+          chmod u+x board_configs.sh mk-uboot.sh
+          ./mk-uboot.sh  ${{ matrix.boards.name }}
+          cd out/u-boot
+          sha256sum idbloader.img u-boot.itb $(ls rk356x_spl_loader*) > sha256sums.txt
+
+      - name: Upload artifacts
+        if: ${{ success() && steps.build-radax.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.boards.name }}
+          path: |
+            out/u-boot/*
