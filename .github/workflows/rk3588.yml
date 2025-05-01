@@ -125,3 +125,5 @@ jobs:
           path: |
             u-boot/u-boot-rockchip.bin
             u-boot/u-boot-rockchip-spi.bin
+            u-boot/idbloader.img
+            u-boot/u-boot.itb
